@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Segredos / credenciais (NUNCA commitar)
+*-key.json
+*_key.json
+*.pem
+.env
+.env.*
+
+# SO / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Assistentes de IA (instrucoes locais — nao versionar)
+CLAUDE.md
+CLAUDE.local.md
+AGENTS.md
+AGENT.md
+GEMINI.md
+.claude/
+.cursor/
+.cursorrules
+.windsurfrules
+.aider*

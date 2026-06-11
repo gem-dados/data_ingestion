@@ -1,0 +1,35 @@
+# Guardrails locais — foco em SEGURANCA (repo publico).
+# Instale: pip install pre-commit && pre-commit install
+repos:
+  # --- Anti-segredo (primeira linha de defesa) ---
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+
+  # --- Seguranca de codigo Python ---
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.10
+    hooks:
+      - id: bandit
+        args: ["-r", "src", "-ll"]
+
+  # --- Qualidade / lint ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.7.4
+    hooks:
+      - id: ruff
+      - id: ruff-format
+
+# Dica: rode `pre-commit autoupdate` periodicamente para fixar os revs mais novos.

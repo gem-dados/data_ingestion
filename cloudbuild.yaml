@@ -1,0 +1,55 @@
+# =============================================================================
+# Esteira do data_ingestion: build da imagem -> Artifact Registry -> deploy
+# no Cloud Run. Branch por ambiente (igual ao cloud_iac):
+#   push 'stg'  -> _ENV=stg  -> projeto gem-dados-lake-stg
+#   push 'main' -> _ENV=prd  -> projeto gem-dados-lake-prd
+#
+# A infra (Artifact Registry, servico Cloud Run, SA) ja foi criada pelo
+# cloud_iac. Aqui so publicamos a imagem e atualizamos o servico.
+# =============================================================================
+substitutions:
+  _ENV: stg
+  _REGION: us-central1
+  _REPO: data-ingestion
+  _SERVICE: data-ingestion
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
+
+steps:
+  # 1) Guardrail: segredo commitado
+  - id: gitleaks
+    name: zricethezav/gitleaks:latest
+    args: ["detect", "--source=.", "--no-banner", "--redact", "--verbose"]
+
+  # 2) Build
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
+      - .
+
+  # 3) Push
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
+
+  # 4) Deploy no Cloud Run (servico ja existe, criado pelo cloud_iac)
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}
+      - --region=${_REGION}
+      - --project=${PROJECT_ID}
+      - --no-allow-unauthenticated
