@@ -1,0 +1,3 @@
+# A aprovacao obrigatoria do `main` (require code owner review) tem que vir de
+# um destes donos. Em producao, voce e o gatekeeper.
+* @neochaotic
