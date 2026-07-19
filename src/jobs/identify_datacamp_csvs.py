@@ -29,7 +29,7 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("ingestion")
 
 MAPEAMENTO_RELATORIOS = {
-    "tempo_no_aprendizado": ["FirstName", "LastName", "Email", "AllTypes", "Courses(Classic)", "Courses(AI Native)", "Courses", "Assessments", "Projects", "Practices"],
+    "tempo_no_aprendizado": ["firstname", "lastname", "email", "alltypes", "courses(classic)", "courses(ai native)", "courses", "assessments", "projects", "practices"],
     "resumo_por_projeto": ["FirstName", "LastName", "UserEmail", "Teams", "ProjectId", "ProjectName", "Technology", "StartedAt", "CompletedAt"],
     "resumo_por_programa": ["FirstName", "LastName", "UserEmail", "Teams", "TrackId", "TrackVersionId", "TrackTitle", "Technology", "StartedAt", "CompletedAt", "% XP Earned", "Hours Spent", "NumCourses", "NumCoursesCompleted", "NumChapters", "NumChaptersCompleted", "NumProjects", "NumProjectsCompleted", "NumAssessments", "NumAssessmentsCompleted"],
     "resumo_por_curso": ["FirstName", "LastName", "UserEmail", "UserName", "Teams", "JoinedGroup", "LeftGroup", "CourseId", "CourseName", "Technology", "StartedCourse", "FinishedCourse", "SkippedCourse", "LastVisitedCourse", "CompletedCourseExercises", "CourseCompletionRate", "CourseStatus", "TotalCourseXPEarned", "TotalCourseXPAvailable", "XPScore", "CourseState"],
@@ -38,7 +38,7 @@ MAPEAMENTO_RELATORIOS = {
     "membros": ["Email", "Name", "Teams", "Role", "Learn license", "Workspace license"],
     "historico_da_equipe": ["EventTime", "EventType", "EventTargetType", "TeamData", "UserData"],
     "catalogo_de_conteudo": ["ID", "Type", "Title", "Description", "URL", "Technology", "Topic", "Skill Level", "Hours", "State", "Mobile", "ReleasedAt", "LastUpdatedAt"],
-    "avaliacao_de_habilidades": ["Email", "Username", "NameID", "Teams", "Assessment Name", "Assessment Slug", "Date Started", "Date Completed", "Reported Score", "Reported Percentile", "Reported Knowledge", "Attempt Number"]
+    "avaliacao_de_habilidades": ["email", "username", "nameid", "teams", "assessment name", "assessment slug", "date started", "date completed", "reported score", "reported percentile", "reported knowledge level", "attempt number"]
 }
 
 def obter_credenciais_drive():
@@ -134,22 +134,33 @@ def enviar_csv_original_para_gcs(project: str, bucket_name: str, caminho_arquivo
     log.info("CSV original salvo em: gs://%s/%s", bucket_name, rota_na_nuvem)
 
 def ler_cabecalho(caminho_do_arquivo: pathlib.Path) -> list[str]:
-    with open(caminho_do_arquivo, mode='r', encoding='utf-8') as f:
+    # Alterado para utf-8-sig para limpar caracteres invisíveis de BOM
+    with open(caminho_do_arquivo, mode='r', encoding='utf-8-sig') as f:
         leitor = csv.reader(f)
         cabecalho_original = next(leitor)
-    return [coluna.strip().lower() for coluna in cabecalho_original]
+    # O .replace("\r", "").replace("\n", "") garante a remoção de quebras de linha invisíveis
+    return [coluna.strip().lower().replace("\r", "").replace("\n", "") for coluna in cabecalho_original] 
 
 def classificar_relatorio(cabecalho_arquivo: list[str]) -> str:
-    colunas_arquivo = set(cabecalho_arquivo)
+    # Junta tudo em uma única string limpa para buscar os termos dentro
+    texto_cabecalho = " ".join(cabecalho_arquivo).lower()
+    
+    # Se contiver os termos únicos do tempo de aprendizado, classifica direto
+    if "courses (classic)" in texto_cabecalho and "alltypes" in texto_cabecalho:
+        return "tempo_no_aprendizado"
+        
+    # Mantém o fluxo padrão para as outras tabelas
     for nome_relatorio, colunas_esperadas in MAPEAMENTO_RELATORIOS.items():
         colunas_gabarito_limpas = {col.strip().lower() for col in colunas_esperadas}
-        if colunas_gabarito_limpas.issubset(colunas_arquivo):
+        if colunas_gabarito_limpas.issubset(set(cabecalho_arquivo)):
             return nome_relatorio
+            
     return "desconhecido"
 
 def converter_csv_para_parquet(caminho_csv: pathlib.Path, tipo_relatorio: str) -> pathlib.Path:
     log.info("Convertendo %s para Parquet...", caminho_csv.name)
-    df = pd.read_csv(caminho_csv, dtype=str)
+    # Adicionado encoding="utf-8-sig" para garantir a leitura correta das linhas com acento
+    df = pd.read_csv(caminho_csv, dtype=str, encoding="utf-8-sig")
     
     df.columns = (
         df.columns.str.strip()
