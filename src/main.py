@@ -10,13 +10,14 @@ import os
 
 from flask import Flask, jsonify
 
-from jobs import example_job
+from jobs import upload_parquet_to_gcs, load_gcs_parquet_to_bigquery
 
 app = Flask(__name__)
 
 # Registro simples de jobs disponiveis.
 JOBS = {
-    "example": example_job.run,
+    "upload_gcs": upload_parquet_to_gcs.run,
+    "load_bq": load_gcs_parquet_to_bigquery.run,
 }
 
 
