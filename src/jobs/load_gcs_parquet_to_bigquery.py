@@ -6,16 +6,16 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 REPORTS_MAPPING = {
-    "membros_export": "raw_members",
-    "avaliacao_de_habilidades_export": "raw_skill_assessments",
-    "catalogo_de_conteudo_export": "raw_content_catalog",
-    "historico_da_equipe_export": "raw_team_history",
-    "resumo_export": "raw_summary",
-    "resumo_por_certificacao_export": "raw_certifications",
-    "resumo_por_curso_export": "raw_course_activity",
-    "resumo_por_programa_export": "raw_program_activity",
-    "resumo_por_projeto_export": "raw_project_activity",
-    "tempo_no_aprendizado_export": "raw_time_spent",
+    "membros": "raw_members",
+    "avaliacao_de_habilidades": "raw_skill_assessments",
+    "catalogo_de_conteudo": "raw_content_catalog",
+    "historico_da_equipe": "raw_team_history",
+    "resumo": "raw_summary",
+    "resumo_por_certificacao": "raw_certifications",
+    "resumo_por_curso": "raw_course_activity",
+    "resumo_por_programa": "raw_program_activity",
+    "resumo_por_projeto": "raw_project_activity",
+    "tempo_no_aprendizado": "raw_time_spent",
 }
 
 
