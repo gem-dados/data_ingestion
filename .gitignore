@@ -30,3 +30,6 @@ GEMINI.md
 .cursorrules
 .windsurfrules
 .aider*
+
+# Arquivos gerados pela ingestão
+dados_processados/
