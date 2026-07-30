@@ -176,6 +176,11 @@ def converter_csv_para_parquet(caminho_csv: pathlib.Path, tipo_relatorio: str) -
     caminho_parquet = pasta_saida / f"{tipo_relatorio}.parquet"
     
     df.to_parquet(caminho_parquet, engine="pyarrow", compression="snappy", index=False)
+    df_parquet = pd.read_parquet(caminho_parquet)
+    if len(df) != len(df_parquet):
+        raise ValueError(
+        f"Falha na conversão: CSV possui {len(df)} linhas e o Parquet possui {len(df_parquet)} linhas."
+    )
     log.info("Salvo localmente em Parquet: %s", caminho_parquet)
     return caminho_parquet
 
