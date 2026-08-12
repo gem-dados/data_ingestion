@@ -14,6 +14,8 @@ import logging
 import os
 import pathlib
 import pickle
+from dotenv import load_dotenv 
+from src.utils.crypto import gerar_user_id
 from datetime import datetime, timezone
 
 # Google APIs
@@ -157,11 +159,13 @@ def classificar_relatorio(cabecalho_arquivo: list[str]) -> str:
             
     return "desconhecido"
 
-def converter_csv_para_parquet(caminho_csv: pathlib.Path, tipo_relatorio: str) -> pathlib.Path:
+def converter_csv_para_parquet(
+    caminho_csv: pathlib.Path, tipo_relatorio: str
+) -> pathlib.Path:
     log.info("Convertendo %s para Parquet...", caminho_csv.name)
-    # Adicionado encoding="utf-8-sig" para garantir a leitura correta das linhas com acento
     df = pd.read_csv(caminho_csv, dtype=str, encoding="utf-8-sig")
-    
+
+    # Padroniza os nomes das colunas
     df.columns = (
         df.columns.str.strip()
         .str.lower()
@@ -170,21 +174,45 @@ def converter_csv_para_parquet(caminho_csv: pathlib.Path, tipo_relatorio: str) -
         .str.replace("(", "")
         .str.replace(")", "")
     )
-    
+
+    # --- INÍCIO DA TASK DE ANONIMIZAÇÃO ---
+    # Identifica a coluna de e-mail presente no relatório (pode ser 'email' ou 'useremail')
+    coluna_email = None
+    if "email" in df.columns:
+        coluna_email = "email"
+    elif "useremail" in df.columns:
+        coluna_email = "useremail"
+
+    if coluna_email:
+        log.info("Anonimizando coluna sensível '%s'...", coluna_email)
+        # Preenche valores nulos para evitar falha no hash e aplica o SHA-256 com salt
+        df["user_id"] = (
+            df[coluna_email].fillna("").astype(str).apply(gerar_user_id)
+        )
+
+        # CRÍTICO: Descarta a coluna original com o e-mail
+        df.drop(columns=[coluna_email], inplace=True)
+    # --- FIM DA TASK DE ANONIMIZAÇÃO ---
+
     pasta_saida = pathlib.Path("dados_processados")
     pasta_saida.mkdir(exist_ok=True)
     caminho_parquet = pasta_saida / f"{tipo_relatorio}.parquet"
-    
-    df.to_parquet(caminho_parquet, engine="pyarrow", compression="snappy", index=False)
+
+    df.to_parquet(
+        caminho_parquet, engine="pyarrow", compression="snappy", index=False
+    )
     df_parquet = pd.read_parquet(caminho_parquet)
+
     if len(df) != len(df_parquet):
         raise ValueError(
-        f"Falha na conversão: CSV possui {len(df)} linhas e o Parquet possui {len(df_parquet)} linhas."
-    )
+            f"Falha na conversão: CSV possui {len(df)} linhas e o Parquet possui {len(df_parquet)} linhas."
+        )
+
     log.info("Salvo localmente em Parquet: %s", caminho_parquet)
     return caminho_parquet
 
 def run() -> None:
+    load_dotenv()
     log.info("Iniciando Job de Ingestao (Drive -> GCS CSV Raw)...")
     
     # 1. Variáveis de ambiente
