@@ -10,7 +10,7 @@ import os
 
 from flask import Flask, jsonify
 
-from jobs import upload_parquet_to_gcs, load_gcs_parquet_to_bigquery
+from jobs import upload_parquet_to_gcs, load_gcs_parquet_to_bigquery, rotina_sem_duplicatas_job
 
 app = Flask(__name__)
 
@@ -18,6 +18,7 @@ app = Flask(__name__)
 JOBS = {
     "upload_gcs": upload_parquet_to_gcs.run,
     "load_bq": load_gcs_parquet_to_bigquery.run,
+    "rotina_sem_duplicatas": rotina_sem_duplicatas_job.run,
 }
 
 

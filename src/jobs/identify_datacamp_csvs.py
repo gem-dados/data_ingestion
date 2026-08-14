@@ -15,7 +15,7 @@ import os
 import pathlib
 import pickle
 from dotenv import load_dotenv 
-from src.utils.crypto import gerar_user_id
+from utils.crypto import gerar_user_id      
 from datetime import datetime, timezone
 
 # Google APIs
