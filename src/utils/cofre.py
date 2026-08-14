@@ -1,3 +1,4 @@
+import os
 import io
 import pandas as pd
 from google.cloud import storage
@@ -25,7 +26,8 @@ def sync_vault_table(
     """
     Realiza o Upsert (Merge) na tabela Cofre no GCS sem duplicar alunos existentes.
     """
-    client = storage.Client()
+    project = os.getenv("GCP_PROJECT", "gem-dados-lake-stg")
+    client = storage.Client(project=project)
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(vault_path)
     

@@ -16,9 +16,9 @@ def run():
 
     print(f"🚀 Iniciando Job de Deduplicação e Cofre no Bucket: {bucket_name}")
     
-    raw_blob_path = "landing/alunos_datacamp.csv"
+    raw_blob_path = "datacamp/raw_csvs/membros_export_70256.csv"
     
-    # Passa o project explicitamente para o cliente do GCS (evita o OSError)
+    # Passa o project explicitamente para o cliente do GCS
     client = storage.Client(project=project)
     bucket = client.bucket(bucket_name)
     blob = bucket.blob(raw_blob_path)
@@ -27,9 +27,33 @@ def run():
         print(f"⚠️ Arquivo {raw_blob_path} não encontrado no bucket. Pulando execução.")
         return {"status": "skipped", "reason": "file_not_found"}
 
-    # 1. Leitura do arquivo CSV
+    # 1. Leitura do arquivo CSV do GCP
     content = blob.download_as_bytes()
     df_raw = pd.read_csv(io.BytesIO(content))
+
+    # Padroniza todas as colunas para minúsculo e sem espaços sobrando
+    df_raw.columns = df_raw.columns.str.strip().str.lower()
+
+    # Identifica e padroniza a coluna de e-mail
+    email_col = None
+    for col in ['email_aluno', 'email', 'user_email', 'member_email']:
+        if col in df_raw.columns:
+            email_col = col
+            break
+    
+    if not email_col:
+        raise KeyError(f"Nenhuma coluna de e-mail encontrada. Colunas no CSV: {list(df_raw.columns)}")
+
+    # Renomeia para o padrão oficial 'email_aluno'
+    if email_col != 'email_aluno':
+        df_raw = df_raw.rename(columns={email_col: 'email_aluno'})
+
+    # Garante coluna de ordenação (updated_at)
+    if 'updated_at' not in df_raw.columns:
+        if 'joined_at' in df_raw.columns:
+            df_raw['updated_at'] = df_raw['joined_at']
+        else:
+            df_raw['updated_at'] = pd.Timestamp.now()
 
     # 2. Criptografia / Hash LGPD
     df_raw['hash_anonimizado'] = df_raw['email_aluno'].fillna("").astype(str).apply(gerar_user_id)
