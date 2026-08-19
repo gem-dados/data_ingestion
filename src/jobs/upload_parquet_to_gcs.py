@@ -12,7 +12,7 @@ import logging
 import os
 import pathlib
 from google.cloud import storage  # type: ignore
-from jobs.identify_datacamp_csvs import run as ingestao_e_conversao
+from src.jobs.identify_datacamp_csvs import run as ingestao_e_conversao
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("ingestion")

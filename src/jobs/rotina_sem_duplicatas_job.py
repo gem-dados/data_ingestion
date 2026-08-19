@@ -3,8 +3,8 @@ import io
 import pandas as pd
 from google.cloud import storage
 
-from utils.cofre import deduplicate_dataframe, sync_vault_table
-from utils.crypto import gerar_user_id
+from src.utils.crypto import gerar_user_id
+from src.utils.cofre import deduplicate_dataframe, sync_vault_table
 
 def run():
     # Lê as variáveis de ambiente com fallback para os nomes do projeto
