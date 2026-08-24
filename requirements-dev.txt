@@ -1,0 +1,6 @@
+# Dependencias de desenvolvimento/CI. Nao vao para a imagem do Cloud Run —
+# o Dockerfile instala so o requirements.txt.
+-r requirements.txt
+
+pytest==9.1.1
+ruff==0.14.5
