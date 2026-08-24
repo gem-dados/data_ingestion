@@ -25,7 +25,19 @@ steps:
     name: zricethezav/gitleaks:latest
     args: ["detect", "--source=.", "--no-banner", "--redact", "--verbose"]
 
-  # 2) Build
+  # 2) Testes antes de publicar imagem. Nao faz sentido subir artefato que nao
+  #    passou no teste — e o smoke de import pega quebra de entrypoint.
+  - id: pytest
+    name: python:3.12-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir --quiet -r requirements-dev.txt
+        python -m pytest tests/ -q
+
+  # 3) Build
   - id: build
     name: gcr.io/cloud-builders/docker
     args:
@@ -34,14 +46,28 @@ steps:
       - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
       - .
 
-  # 3) Push
+  # 4) Smoke DA IMAGEM: importa o entrypoint dentro do container recem-criado.
+  #    O pytest roda na raiz do repo, onde 'src' sempre resolve — ele nao pega
+  #    erro de layout da imagem (ex.: um COPY que achata o pacote). Este passo
+  #    pega, e impede que imagem quebrada chegue no Artifact Registry.
+  - id: smoke-imagem
+    name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --rm
+      - --entrypoint=python
+      - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
+      - -c
+      - "from src.main import app; print('smoke ok: entrypoint carregou')"
+
+  # 5) Push
   - id: push
     name: gcr.io/cloud-builders/docker
     args:
       - push
       - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPO}/${_SERVICE}:${SHORT_SHA}"
 
-  # 4) Deploy no Cloud Run (servico ja existe, criado pelo cloud_iac)
+  # 6) Deploy no Cloud Run (servico ja existe, criado pelo cloud_iac)
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud

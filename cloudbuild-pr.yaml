@@ -1,0 +1,45 @@
+# =============================================================================
+# Esteira de PR do data_ingestion. NUNCA faz build de imagem nem deploy — so
+# valida e barra o merge. E o "portao" antes do merge, espelhando o
+# cloudbuild-pr.yaml do cloud_iac.
+#
+# Mantenha branch protection exigindo este check: sem isso a validacao existe
+# mas da para mergear por cima dela.
+# =============================================================================
+substitutions:
+  _ENV: stg
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  # 1) Segredos commitados
+  - id: gitleaks
+    name: zricethezav/gitleaks:latest
+    args: ["detect", "--source=.", "--no-banner", "--redact", "--verbose"]
+
+  # 2) Lint — so a familia de ERROS reais (sintaxe invalida, nome indefinido,
+  #    comparacao sempre falsa). O ruff completo acusa ~17 ocorrencias de estilo
+  #    hoje; ligar tudo de uma vez travaria todo mundo. Quando o time quiser
+  #    apertar, e so ampliar o --select (ou criar um pyproject.toml).
+  - id: ruff
+    name: python:3.12-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir --quiet ruff==0.14.5
+        ruff check . --select E9,F63,F7,F82 --no-cache
+
+  # 3) Testes. Inclui o smoke de import, que garante que todo modulo do pacote
+  #    carrega — se o entrypoint quebrar no import, o container nao sobe.
+  - id: pytest
+    name: python:3.12-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --no-cache-dir --quiet -r requirements-dev.txt
+        python -m pytest tests/ -q

@@ -4,3 +4,10 @@ google-cloud-storage==2.19.0
 google-cloud-bigquery==3.27.0
 google-api-python-client== 2.198.0
 google-auth-oauthlib== 1.4.0
+
+# Usadas pelos jobs de ingestao (pandas/pyarrow para CSV->Parquet, dotenv para
+# carregar o .env). Estavam faltando: a imagem subia sem elas e quebrava no
+# import.
+pandas==3.0.5
+pyarrow==25.0.1
+python-dotenv==1.2.3
