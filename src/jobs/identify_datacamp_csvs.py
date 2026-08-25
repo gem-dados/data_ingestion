@@ -9,26 +9,20 @@ from __future__ import annotations
 
 import csv
 import io
-import json
 import logging
 import os
 import pathlib
-import pickle
-import sys
-from pathlib import Path
 
-from dotenv import load_dotenv 
-from src.utils.crypto import gerar_user_id    
-from datetime import datetime, timezone
+from dotenv import load_dotenv
+import pandas as pd
 
 # Google APIs
 from google.auth import default
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.cloud import storage  # type: ignore
-from google_auth_oauthlib.flow import InstalledAppFlow  # Adicionado para o fluxo do navegador
-from google.auth.transport.requests import Request  # Adicionado para renovar o token expirado
-import pandas as pd
+
+from src.utils.crypto import gerar_user_id
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("ingestion")
@@ -46,37 +40,19 @@ MAPEAMENTO_RELATORIOS = {
     "avaliacao_de_habilidades": ["email", "username", "nameid", "teams", "assessment name", "assessment slug", "date started", "date completed", "reported score", "reported percentile", "reported knowledge level", "attempt number"]
 }
 
+SCOPES_DRIVE = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES_GCS = ["https://www.googleapis.com/auth/devstorage.read_write"]
+
+
 def obter_credenciais_drive():
-    """Realiza o fluxo de autenticação via navegador para o Google Drive e salva o token localmente."""
-    scopes = ["https://www.googleapis.com/auth/drive.readonly"]
-    creds = None
-    
-    # Se o token temporário já existir, reutiliza ele
-    if os.path.exists("token.pickle"):
-        with open("token.pickle", "rb") as token:
-            creds = pickle.load(token)
-            
-    # Se não existir ou estiver expirado, abre o navegador para o usuário logar
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists("client_secret.json"):
-                raise FileNotFoundError("O arquivo client_secret.json nao foi encontrado na raiz do projeto!")
-            
-            flow = InstalledAppFlow.from_client_secrets_file("client_secret.json", scopes)
-            creds = flow.run_local_server(port=0)
-            
-        # Salva o token para não precisar logar toda vez que rodar o script
-        with open("token.pickle", "wb") as token:
-            pickle.dump(creds, token)
-            
+    """Retorna as credenciais para o Google Drive via Application Default Credentials (ADC)."""
+    creds, _ = default(scopes=SCOPES_DRIVE)
     return creds
+
 
 def obter_credenciais_gcs():
     """Retorna as credenciais nativas do sistema (ADC) para o Cloud Storage."""
-    scopes = ["https://www.googleapis.com/auth/devstorage.read_write"]
-    creds, _ = default(scopes=scopes)
+    creds, _ = default(scopes=SCOPES_GCS)
     return creds
 
 def baixar_arquivos_do_drive(id_pasta_drive: str, pasta_local_destino: pathlib.Path) -> list[pathlib.Path]:
