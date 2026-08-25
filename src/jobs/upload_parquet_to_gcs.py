@@ -47,39 +47,21 @@ def run() -> None:
     log.info("Executando a etapa previa de ingestao e conversao para Parquet...") 
     ingestao_e_conversao()
 
-    # 2. Variáveis de ambiente padrão (injetadas pelo Terraform)
-    project = os.environ.get("GCP_PROJECT", "projeto-local")          
-    raw_bucket = os.environ.get("RAW_BUCKET", "bucket-local")
+    # 2. Variaveis de ambiente padrao (injetadas pelo Terraform)
+    project = os.environ.get("GCP_PROJECT", "gem-dados-lake-stg")          
+    raw_bucket = os.environ.get("RAW_BUCKET", "gem-dados-lake-stg-raw")
    
-    # 3. Pasta onde estão os arquivos Parquet que gerados
+    # 3. Se houver arquivos legados em disco local, processa como utilitario
     pasta_processados = pathlib.Path("dados_processados")
-   
-    if not pasta_processados.exists():
-        log.error("A pasta '%s' nao existe. Certifique-se de rodar 'identify_datacamp_csvs.py' primeiro.", pasta_processados)
-        return
-
-
-    # 4. Loop para escanear a pasta local e enviar cada arquivo .parquet encontrado
-    arquivos_parquet = list(pasta_processados.glob("*.parquet"))
-   
-    if not arquivos_parquet:
-        log.warning("Nenhum arquivo .parquet encontrado para upload em '%s'.", pasta_processados)
-        return
-
-
-    for arquivo in arquivos_parquet:
-        # Define a estrutura de pastas que o arquivo terá dentro da nuvem (Landing Zone)
-        # Ex: datacamp/raw/tempo_no_aprendizado.parquet
-# Se o arquivo for "usuarios_registrados.parquet", o .stem captura apenas "usuarios_registrados"
-        nome_relatorio = arquivo.stem
-        rota_na_nuvem = f"datacamp/raw/{nome_relatorio}/{arquivo.name}"
-
-
-       
-        upload_arquivo_para_gcs(project, raw_bucket, arquivo, rota_na_nuvem)
-
-
-    log.info("Todos os uploads foram processados.")
+    if pasta_processados.exists():
+        arquivos_parquet = list(pasta_processados.glob("*.parquet"))
+        for arquivo in arquivos_parquet:
+            nome_relatorio = arquivo.stem
+            rota_na_nuvem = f"datacamp/raw/{nome_relatorio}/{arquivo.name}"
+            upload_arquivo_para_gcs(project, raw_bucket, arquivo, rota_na_nuvem)
+        log.info("Uploads locais complementares processados.")
+    else:
+        log.info("Ingestao direta para o GCS concluida com sucesso via identify_datacamp_csvs.")
 
 
 if __name__ == "__main__":

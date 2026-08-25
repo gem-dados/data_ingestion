@@ -10,12 +10,18 @@ import os
 
 from flask import Flask, jsonify
 
-from src.jobs import upload_parquet_to_gcs, load_gcs_parquet_to_bigquery, rotina_sem_duplicatas_job
+from src.jobs import (
+    identify_datacamp_csvs,
+    load_gcs_parquet_to_bigquery,
+    rotina_sem_duplicatas_job,
+    upload_parquet_to_gcs,
+)
 
 app = Flask(__name__)
 
 # Registro simples de jobs disponiveis.
 JOBS = {
+    "ingest": identify_datacamp_csvs.run,
     "upload_gcs": upload_parquet_to_gcs.run,
     "load_bq": load_gcs_parquet_to_bigquery.run,
     "rotina_sem_duplicatas": rotina_sem_duplicatas_job.run,
