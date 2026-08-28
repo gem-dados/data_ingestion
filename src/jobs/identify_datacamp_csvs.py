@@ -1,34 +1,28 @@
 """Job de identificacao e ingestao de relatorios DataCamp.
 
-Faz a ingestão dos CSVs disponibilizados no Google Drive via Google API (com conta de serviço).
-Ler dinamicamente o cabeçalho dos arquivos e classificar os 10 tipos de relatórios.
-
+Faz a ingestão dos CSVs disponibilizados no Google Drive via Google API (com conta de serviço/ADC).
+Lê dinamicamente o cabeçalho dos arquivos, classifica os tipos de relatórios,
+anonimiza dados sensíveis e grava os arquivos Parquet diretamente no Google Cloud Storage (sem estado local).
 """
 
 from __future__ import annotations
 
 import csv
 import io
-import json
 import logging
 import os
 import pathlib
-import pickle
-import sys
-from pathlib import Path
 
-from dotenv import load_dotenv 
-from src.utils.crypto import gerar_user_id    
-from datetime import datetime, timezone
+from dotenv import load_dotenv
+import pandas as pd
 
 # Google APIs
 from google.auth import default
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 from google.cloud import storage  # type: ignore
-from google_auth_oauthlib.flow import InstalledAppFlow  # Adicionado para o fluxo do navegador
-from google.auth.transport.requests import Request  # Adicionado para renovar o token expirado
-import pandas as pd
+
+from src.utils.crypto import gerar_user_id
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 log = logging.getLogger("ingestion")
@@ -46,129 +40,114 @@ MAPEAMENTO_RELATORIOS = {
     "avaliacao_de_habilidades": ["email", "username", "nameid", "teams", "assessment name", "assessment slug", "date started", "date completed", "reported score", "reported percentile", "reported knowledge level", "attempt number"]
 }
 
+SCOPES_DRIVE = ["https://www.googleapis.com/auth/drive.readonly"]
+SCOPES_GCS = ["https://www.googleapis.com/auth/devstorage.read_write"]
+
+
 def obter_credenciais_drive():
-    """Realiza o fluxo de autenticação via navegador para o Google Drive e salva o token localmente."""
-    scopes = ["https://www.googleapis.com/auth/drive.readonly"]
-    creds = None
-    
-    # Se o token temporário já existir, reutiliza ele
-    if os.path.exists("token.pickle"):
-        with open("token.pickle", "rb") as token:
-            creds = pickle.load(token)
-            
-    # Se não existir ou estiver expirado, abre o navegador para o usuário logar
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            if not os.path.exists("client_secret.json"):
-                raise FileNotFoundError("O arquivo client_secret.json nao foi encontrado na raiz do projeto!")
-            
-            flow = InstalledAppFlow.from_client_secrets_file("client_secret.json", scopes)
-            creds = flow.run_local_server(port=0)
-            
-        # Salva o token para não precisar logar toda vez que rodar o script
-        with open("token.pickle", "wb") as token:
-            pickle.dump(creds, token)
-            
+    """Retorna as credenciais para o Google Drive via Application Default Credentials (ADC)."""
+    creds, _ = default(scopes=SCOPES_DRIVE)
     return creds
+
 
 def obter_credenciais_gcs():
     """Retorna as credenciais nativas do sistema (ADC) para o Cloud Storage."""
-    scopes = ["https://www.googleapis.com/auth/devstorage.read_write"]
-    creds, _ = default(scopes=scopes)
+    creds, _ = default(scopes=SCOPES_GCS)
     return creds
 
-def baixar_arquivos_do_drive(id_pasta_drive: str, pasta_local_destino: pathlib.Path) -> list[pathlib.Path]:
-    """Lista e faz o download de todos os CSVs brutos do Drive para o ambiente local."""
-    log.info("Conectando ao Google Drive...")
-    
+
+def baixar_arquivos_do_drive_em_memoria(id_pasta_drive: str) -> list[tuple[str, io.BytesIO]]:
+    """Lista e faz o download de todos os CSVs do Drive diretamente em memória (sem salvar no disco)."""
+    log.info("Conectando ao Google Drive via Service Account / ADC...")
+
     creds = obter_credenciais_drive()
     service = build("drive", "v3", credentials=creds)
-    
-    pasta_local_destino.mkdir(exist_ok=True)
-    arquivos_baixados = []
-    
-    # Query definitiva usando o mimeType exato que o diagnóstico validou
+
     query = f"'{id_pasta_drive}' in parents and mimeType = 'text/csv' and trashed = false"
-    
-    # Mantemos os parâmetros que solucionaram o acesso à pasta compartilhada
+
     resultados = service.files().list(
-        q=query, 
+        q=query,
         fields="files(id, name)",
         supportsAllDrives=True,
         includeItemsFromAllDrives=True
     ).execute()
-    
-    itens = resultados.get("files", [])
-    
-    if not itens:
-        log.warning("Nenhum CSV encontrado na pasta do Drive.")
-        return arquivos_baixados
 
+    itens = resultados.get("files", [])
+    if not itens:
+        log.warning("Nenhum CSV encontrado na pasta do Drive: %s", id_pasta_drive)
+        return []
+
+    arquivos_em_memoria = []
     for item in itens:
         file_id = item["id"]
         file_name = item["name"]
-        caminho_local = pasta_local_destino / file_name
-        
-        log.info("Efetuando download: %s", file_name)
+        log.info("Baixando do Drive para memória: %s", file_name)
+
+        buffer = io.BytesIO()
         requisicao = service.files().get_media(fileId=file_id)
-        with io.FileIO(caminho_local, "wb") as fh:
-            downloader = MediaIoBaseDownload(fh, requisicao)
-            done = False
-            while not done:
-                _, done = downloader.next_chunk()
-                
-        arquivos_baixados.append(caminho_local)
-        
-    return arquivos_baixados
+        downloader = MediaIoBaseDownload(buffer, requisicao)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
 
-def enviar_csv_original_para_gcs(project: str, bucket_name: str, caminho_arquivo: pathlib.Path) -> None:
-    """Faz upload do CSV original e inalterado diretamente para a camada RAW do bucket."""
-    log.info("Enviando CSV original para o Storage: %s", caminho_arquivo.name)
-    
-    # Usa o fluxo original do terminal (ADC) que é mais seguro para a GCP
-    creds = obter_credenciais_gcs()
-    client = storage.Client(project=project, credentials=creds)
-    bucket = client.bucket(bucket_name)
-    
-    rota_na_nuvem = f"datacamp/raw_csvs/{caminho_arquivo.name}"
+        buffer.seek(0)
+        arquivos_em_memoria.append((file_name, buffer))
+
+    return arquivos_em_memoria
+
+
+def enviar_csv_original_para_gcs(bucket: storage.Bucket, file_name: str, buffer_csv: io.BytesIO) -> None:
+    """Faz upload do CSV original inalterado diretamente da memória para o GCS."""
+    log.info("Enviando CSV original para o Storage: %s", file_name)
+    buffer_csv.seek(0)
+
+    rota_na_nuvem = f"datacamp/raw_csvs/{file_name}"
     blob = bucket.blob(rota_na_nuvem)
-    
-    blob.upload_from_filename(str(caminho_arquivo))
-    log.info("CSV original salvo em: gs://%s/%s", bucket_name, rota_na_nuvem)
+    blob.upload_from_file(buffer_csv, content_type="text/csv")
+    buffer_csv.seek(0)
+    log.info("CSV original salvo em: gs://%s/%s", bucket.name, rota_na_nuvem)
 
-def ler_cabecalho(caminho_do_arquivo: pathlib.Path) -> list[str]:
-    # Alterado para utf-8-sig para limpar caracteres invisíveis de BOM
-    with open(caminho_do_arquivo, mode='r', encoding='utf-8-sig') as f:
-        leitor = csv.reader(f)
+
+def ler_cabecalho(conteudo_csv: io.BytesIO | pathlib.Path | str) -> list[str]:
+    """Lê a primeira linha do CSV e retorna as colunas tratadas."""
+    if isinstance(conteudo_csv, io.BytesIO):
+        conteudo_csv.seek(0)
+        texto = conteudo_csv.getvalue().decode("utf-8-sig", errors="ignore")
+        leitor = csv.reader(io.StringIO(texto))
         cabecalho_original = next(leitor)
-    # O .replace("\r", "").replace("\n", "") garante a remoção de quebras de linha invisíveis
-    return [coluna.strip().lower().replace("\r", "").replace("\n", "") for coluna in cabecalho_original] 
+        conteudo_csv.seek(0)
+    else:
+        with open(conteudo_csv, mode="r", encoding="utf-8-sig") as f:
+            leitor = csv.reader(f)
+            cabecalho_original = next(leitor)
+
+    return [coluna.strip().lower().replace("\r", "").replace("\n", "") for coluna in cabecalho_original]
+
 
 def classificar_relatorio(cabecalho_arquivo: list[str]) -> str:
-    # Junta tudo em uma única string limpa para buscar os termos dentro
+    """Classifica o tipo de relatório a partir do cabeçalho."""
     texto_cabecalho = " ".join(cabecalho_arquivo).lower()
-    
-    # Se contiver os termos únicos do tempo de aprendizado, classifica direto
+
     if "courses (classic)" in texto_cabecalho and "alltypes" in texto_cabecalho:
         return "tempo_no_aprendizado"
-        
-    # Mantém o fluxo padrão para as outras tabelas
+
     for nome_relatorio, colunas_esperadas in MAPEAMENTO_RELATORIOS.items():
         colunas_gabarito_limpas = {col.strip().lower() for col in colunas_esperadas}
         if colunas_gabarito_limpas.issubset(set(cabecalho_arquivo)):
             return nome_relatorio
-            
+
     return "desconhecido"
 
-def converter_csv_para_parquet(
-    caminho_csv: pathlib.Path, tipo_relatorio: str
-) -> pathlib.Path:
-    log.info("Convertendo %s para Parquet...", caminho_csv.name)
-    df = pd.read_csv(caminho_csv, dtype=str, encoding="utf-8-sig")
 
-    # Padroniza os nomes das colunas
+def processar_csv(conteudo_csv: io.BytesIO | pathlib.Path | str) -> pd.DataFrame:
+    """Processa o CSV: padroniza nomes de colunas e anonimiza e-mails sensíveis."""
+    if isinstance(conteudo_csv, io.BytesIO):
+        conteudo_csv.seek(0)
+        df = pd.read_csv(conteudo_csv, dtype=str, encoding="utf-8-sig")
+        conteudo_csv.seek(0)
+    else:
+        df = pd.read_csv(conteudo_csv, dtype=str, encoding="utf-8-sig")
+
     df.columns = (
         df.columns.str.strip()
         .str.lower()
@@ -178,8 +157,7 @@ def converter_csv_para_parquet(
         .str.replace(")", "")
     )
 
-    # --- INÍCIO DA TASK DE ANONIMIZAÇÃO ---
-    # Identifica a coluna de e-mail presente no relatório (pode ser 'email' ou 'useremail')
+    # Anonimização de colunas de e-mail (LGPD)
     coluna_email = None
     if "email" in df.columns:
         coluna_email = "email"
@@ -188,72 +166,98 @@ def converter_csv_para_parquet(
 
     if coluna_email:
         log.info("Anonimizando coluna sensível '%s'...", coluna_email)
-        # Preenche valores nulos para evitar falha no hash e aplica o SHA-256 com salt
         df["user_id"] = (
             df[coluna_email].fillna("").astype(str).apply(gerar_user_id)
         )
-
-        # CRÍTICO: Descarta a coluna original com o e-mail
         df.drop(columns=[coluna_email], inplace=True)
-    # --- FIM DA TASK DE ANONIMIZAÇÃO ---
 
-    pasta_saida = pathlib.Path("dados_processados")
-    pasta_saida.mkdir(exist_ok=True)
-    caminho_parquet = pasta_saida / f"{tipo_relatorio}.parquet"
+    return df
 
-    df.to_parquet(
-        caminho_parquet, engine="pyarrow", compression="snappy", index=False
-    )
-    df_parquet = pd.read_parquet(caminho_parquet)
 
-    if len(df) != len(df_parquet):
-        raise ValueError(
-            f"Falha na conversão: CSV possui {len(df)} linhas e o Parquet possui {len(df_parquet)} linhas."
-        )
+def converter_csv_para_parquet(
+    caminho_csv: pathlib.Path | str | io.BytesIO, tipo_relatorio: str = "relatorio"
+) -> pathlib.Path | io.BytesIO:
+    """Converte CSV para Parquet em memória (ou arquivo se passado Path)."""
+    df = processar_csv(caminho_csv)
+    buffer = io.BytesIO()
+    df.to_parquet(buffer, engine="pyarrow", compression="snappy", index=False)
+    buffer.seek(0)
 
-    log.info("Salvo localmente em Parquet: %s", caminho_parquet)
-    return caminho_parquet
+    if isinstance(caminho_csv, (str, pathlib.Path)):
+        caminho_parquet = pathlib.Path(caminho_csv).with_suffix(".parquet")
+        with open(caminho_parquet, "wb") as f:
+            f.write(buffer.getvalue())
+        return caminho_parquet
+
+    return buffer
+
+
+def enviar_parquet_para_gcs(bucket: storage.Bucket, tipo_relatorio: str, df: pd.DataFrame) -> None:
+    """Serializa DataFrame em Parquet em memória e faz o upload direto para o GCS."""
+    log.info("Serializando e enviando Parquet para GCS: %s...", tipo_relatorio)
+
+    buffer = io.BytesIO()
+    df.to_parquet(buffer, engine="pyarrow", compression="snappy", index=False)
+    buffer.seek(0)
+
+    rota_na_nuvem = f"datacamp/raw/{tipo_relatorio}/{tipo_relatorio}.parquet"
+    blob = bucket.blob(rota_na_nuvem)
+    blob.upload_from_file(buffer, content_type="application/octet-stream")
+
+    log.info("Parquet salvo no GCS em: gs://%s/%s (%d linhas)", bucket.name, rota_na_nuvem, len(df))
+
 
 def run() -> None:
+    """Executa a ingestão sem estado local: Drive -> Memória -> GCS."""
     load_dotenv()
-    log.info("Iniciando Job de Ingestao (Drive -> GCS CSV Raw)...")
-    
-    # 1. Variáveis de ambiente
-    project = os.environ.get("GCP_PROJECT", "projeto-local")
-    raw_bucket = os.environ.get("RAW_BUCKET", "bucket-local")  # Usando a mesma variável para manter a consistência
-    id_pasta_drive = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
-    
-    if not id_pasta_drive:
-        log.error("A variavel GOOGLE_DRIVE_FOLDER_ID nao esta configurada!")
-        return
+    log.info("Iniciando Job de Ingestao sem estado local (Drive -> Memória -> GCS)...")
 
-    pasta_inputs = pathlib.Path("dados_teste")
-    
-    # 2. Ingestão dos CSVs
+    project = os.environ.get("GCP_PROJECT", "gem-dados-lake-stg")
+    raw_bucket = os.environ.get("RAW_BUCKET", "gem-dados-lake-stg-raw")
+    id_pasta_drive = os.environ.get("GOOGLE_DRIVE_FOLDER_ID")
+
+    if not id_pasta_drive:
+        msg = "A variavel GOOGLE_DRIVE_FOLDER_ID nao esta configurada no ambiente!"
+        log.error(msg)
+        raise ValueError(msg)
+
+    # 1. Download de todos os CSVs em memória
     try:
-        arquivos_baixados = baixar_arquivos_do_drive(id_pasta_drive, pasta_inputs)
+        arquivos_em_memoria = baixar_arquivos_do_drive_em_memoria(id_pasta_drive)
     except Exception as e:
         log.error("Erro ao baixar arquivos do Drive: %s", str(e))
+        raise e
+
+    if not arquivos_em_memoria:
+        log.warning("Nenhum arquivo CSV encontrado na pasta do Drive.")
         return
 
-    # 3. Upload Raw (CSV) e transformação local para Parquet
-    for arquivo in arquivos_baixados:
+    # 2. Cliente GCS
+    creds_gcs = obter_credenciais_gcs()
+    client = storage.Client(project=project, credentials=creds_gcs)
+    bucket = client.bucket(raw_bucket)
+
+    # 3. Processamento e upload em memória
+    for file_name, buffer_csv in arquivos_em_memoria:
         try:
-            # Garante que o arquivo bruto (CSV) chegue na nuvem inalterado
-            enviar_csv_original_para_gcs(project, raw_bucket, arquivo)
-            
-            # Executa apenas a classificação e conversão local para Parquet
-            cabecalho = ler_cabecalho(arquivo)
+            # Envia CSV bruto para a camada raw_csvs do GCS
+            enviar_csv_original_para_gcs(bucket, file_name, buffer_csv)
+
+            # Classifica o relatório
+            cabecalho = ler_cabecalho(buffer_csv)
             tipo_relatorio = classificar_relatorio(cabecalho)
-            log.info("Arquivo: %s | Classificado como: %s", arquivo.name, tipo_relatorio)
-            
+            log.info("Arquivo: %s | Classificado como: %s", file_name, tipo_relatorio)
+
             if tipo_relatorio != "desconhecido":
-                converter_csv_para_parquet(arquivo, tipo_relatorio)
+                df = processar_csv(buffer_csv)
+                enviar_parquet_para_gcs(bucket, tipo_relatorio, df)
             else:
-                log.warning("Arquivo %s nao convertido por ser desconhecido.", arquivo.name)
-                
+                log.warning("Arquivo %s nao convertido por ser desconhecido.", file_name)
+
         except Exception as e:
-            log.error("Erro ao processar o arquivo %s: %s", arquivo.name, str(e))
+            log.error("Erro ao processar o arquivo %s: %s", file_name, str(e))
+            raise e
+
 
 if __name__ == "__main__":
     run()
