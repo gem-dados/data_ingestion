@@ -7,12 +7,20 @@ venv/
 .ruff_cache/
 *.egg-info/
 
-# Segredos / credenciais (NUNCA commitar)
+# Segredos / credenciais / tokens de sessão (NUNCA commitar)
 *-key.json
 *_key.json
 *.pem
 .env
 .env.*
+client_secret.json
+*.json
+!requirements*.json
+token.pickle
+token.json
+
+# Metadados do Windows/WSL
+*:Zone.Identifier
 
 # SO / editor
 .DS_Store
@@ -33,3 +41,6 @@ GEMINI.md
 
 # Arquivos gerados pela ingestão
 dados_processados/
+dados_teste/
+*.parquet
+*.csv
