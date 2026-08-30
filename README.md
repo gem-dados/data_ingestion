@@ -35,7 +35,6 @@ data_ingestion/
 ├── src/
 │   ├── main.py              # entrypoint HTTP (Cloud Run): /healthz, /run/<job>
 │   └── jobs/
-│       └── example_job.py   # molde de job (copie para criar o seu)
 ├── Dockerfile               # imagem slim, usuário não-root
 ├── requirements.txt
 ├── cloudbuild.yaml          # build → push → deploy
@@ -64,7 +63,10 @@ python src/main.py          # sobe em http://localhost:8080
 
 ## Criar um job novo
 
-1. Copie `src/jobs/example_job.py` → `src/jobs/meu_job.py` e implemente `run()`.
+1. Veja `src/jobs/load_gcs_parquet_to_bigquery.py` como referência de estrutura:
+   função `run()` sem argumentos, variáveis de ambiente lidas via `os.environ`,
+   logging com o módulo `logging`. Crie `src/jobs/meu_job.py` seguindo o mesmo
+   padrão.
 2. Registre em `src/main.py` no dict `JOBS`.
 3. Config sensível? Crie no **Secret Manager** (via `cloud_iac`) e injete como
    `secret_env` no serviço Cloud Run — **nunca** hardcode.
