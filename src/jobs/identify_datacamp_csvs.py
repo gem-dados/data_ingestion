@@ -163,6 +163,8 @@ def processar_csv(conteudo_csv: io.BytesIO | pathlib.Path | str) -> pd.DataFrame
         coluna_email = "email"
     elif "useremail" in df.columns:
         coluna_email = "useremail"
+    elif "userdata" in df.columns:
+        coluna_email = "userdata"
 
     if coluna_email:
         log.info("Anonimizando coluna sensível '%s'...", coluna_email)
